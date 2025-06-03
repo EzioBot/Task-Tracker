@@ -142,7 +142,25 @@ class TaskTracker(QWidget):
         # --- Task list ---
         self.task_list = QListWidget()
         self.task_list.setFont(font)
-        self.task_list.setStyleSheet("background-color: #fffbe6;")
+        self.task_list.setStyleSheet("""
+            QListWidget {
+                background-color: #fffbe6;
+                border: none;
+            }
+            QListWidget::item {
+                background: #f9eec0;
+                border: 1.5px solid #d4c9a8;
+                border-radius: 10px;
+                margin: 8px 4px;
+                padding: 10px 12px;
+                color: #333;
+            }
+            QListWidget::item:selected {
+                background: #ffe066;
+                border: 2px solid #f1c40f;
+                color: #222;
+            }
+        """)
         main_layout.addWidget(self.task_list)
 
         # --- Edit/Delete buttons ---
@@ -187,11 +205,16 @@ class TaskTracker(QWidget):
             json.dump(tasks, f)
 
     def load_tasks(self):
+        self.task_list.clear()
         try:
             with open("tasks.json", "r") as f:
                 tasks = json.load(f)
                 for task in tasks:
-                    self.task_list.addItem(task)
+                    if isinstance(task, str):
+                        self.task_list.addItem(task)
+                    elif isinstance(task, dict):
+                        # fallback: show description if present
+                        self.task_list.addItem(task.get("description", ""))
         except FileNotFoundError:
             pass
 
