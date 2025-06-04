@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QFrame, QMenu, QListWidgetItem
 )
 from PyQt5.QtCore import QTimer, QTime, Qt, QDate, QPoint, QRect
-from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtGui import QFont, QIcon, QColor, QBrush
 
 
 class TaskTracker(QWidget):
@@ -161,10 +161,15 @@ class TaskTracker(QWidget):
                 color: #222;
             }
             QListWidget::item[completed="true"] {
-                background: #e8f5e9;
-                border: 1.5px solid #81c784;
-                color: #2e7d32;
+                background: #e0e0e0;
+                border: 1.5px solid #bdbdbd;
+                color: #757575;
                 text-decoration: line-through;
+            }
+            QListWidget::item[completed="true"]:selected {
+                background: #bdbdbd;
+                border: 2px solid #9e9e9e;
+                color: #616161;
             }
         """)
         self.task_list.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -179,7 +184,12 @@ class TaskTracker(QWidget):
     def add_task(self):
         task_text = self.task_input.text().strip()
         if task_text:
-            self.task_list.addItem(task_text)
+            item = QListWidgetItem(task_text)
+            item.setData(Qt.UserRole, False)
+            item.setData(Qt.UserRole + 1, "false")
+            item.setForeground(QBrush(QColor("#333")))
+            item.setBackground(QBrush(QColor("#f9eec0")))
+            self.task_list.addItem(item)
             self.task_input.clear()
             self.save_tasks()
 
@@ -206,7 +216,7 @@ class TaskTracker(QWidget):
             item = self.task_list.item(i)
             task_data = {
                 "text": item.text(),
-                "completed": item.data(Qt.UserRole) or False
+                "completed": bool(item.data(Qt.UserRole))
             }
             tasks.append(task_data)
         with open("tasks.json", "w") as f:
@@ -220,12 +230,28 @@ class TaskTracker(QWidget):
                 for task in tasks:
                     if isinstance(task, dict):
                         item = QListWidgetItem(task.get("text", ""))
+                        is_done = task.get("completed", False)
+                        item.setData(Qt.UserRole, is_done)
+                        item.setData(Qt.UserRole + 1, "true" if is_done else "false")
+
+                        # Apply visual style
+                        font = item.font()
+                        font.setStrikeOut(is_done)
+                        item.setFont(font)
+
+                        if is_done:
+                            item.setForeground(QBrush(QColor("#757575")))
+                            item.setBackground(QBrush(QColor("#e0e0e0")))
+                        else:
+                            item.setForeground(QBrush(QColor("#333")))
+                            item.setBackground(QBrush(QColor("#f9eec0")))
+
                         self.task_list.addItem(item)
-                        if task.get("completed", False):
-                            item.setData(Qt.UserRole, True)
-                            item.setData(Qt.UserRole + 1, "true")
                     elif isinstance(task, str):
-                        self.task_list.addItem(task)
+                        item = QListWidgetItem(task)
+                        item.setData(Qt.UserRole, False)
+                        item.setData(Qt.UserRole + 1, "false")
+                        self.task_list.addItem(item)
         except FileNotFoundError:
             pass
 
@@ -269,10 +295,20 @@ class TaskTracker(QWidget):
         if item:
             is_done = not item.data(Qt.UserRole)
             item.setData(Qt.UserRole, is_done)
+            item.setData(Qt.UserRole + 1, "true" if is_done else "false")
+
+            # Update appearance
+            font = item.font()
+            font.setStrikeOut(is_done)
+            item.setFont(font)
+
             if is_done:
-                item.setData(Qt.UserRole + 1, "true")
+                item.setForeground(QBrush(QColor("#757575")))  # Gray text
+                item.setBackground(QBrush(QColor("#e0e0e0")))  # Light gray background
             else:
-                item.setData(Qt.UserRole + 1, "false")
+                item.setForeground(QBrush(QColor("#333")))  # Default text
+                item.setBackground(QBrush(QColor("#f9eec0")))  # Default background
+
             self.save_tasks()
 
     # --- Mouse events for dragging and resizing ---
