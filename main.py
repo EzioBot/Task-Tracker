@@ -3,7 +3,7 @@ import json
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QCalendarWidget, QLineEdit, QListWidget, QLabel, QInputDialog,
-    QFrame
+    QFrame, QMenu, QListWidgetItem
 )
 from PyQt5.QtCore import QTimer, QTime, Qt, QDate, QPoint, QRect
 from PyQt5.QtGui import QFont, QIcon
@@ -160,18 +160,16 @@ class TaskTracker(QWidget):
                 border: 2px solid #f1c40f;
                 color: #222;
             }
+            QListWidget::item[completed="true"] {
+                background: #e8f5e9;
+                border: 1.5px solid #81c784;
+                color: #2e7d32;
+                text-decoration: line-through;
+            }
         """)
+        self.task_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.task_list.customContextMenuRequested.connect(self.show_context_menu)
         main_layout.addWidget(self.task_list)
-
-        # --- Edit/Delete buttons ---
-        btn_layout = QHBoxLayout()
-        edit_btn = QPushButton("Edit")
-        delete_btn = QPushButton("Delete")
-        edit_btn.clicked.connect(self.edit_task)
-        delete_btn.clicked.connect(self.delete_task)
-        btn_layout.addWidget(edit_btn)
-        btn_layout.addWidget(delete_btn)
-        main_layout.addLayout(btn_layout)
 
         self.setLayout(main_layout)
 
@@ -185,22 +183,32 @@ class TaskTracker(QWidget):
             self.task_input.clear()
             self.save_tasks()
 
-    def edit_task(self):
-        current_item = self.task_list.currentItem()
-        if current_item:
-            new_text, ok = QInputDialog.getText(self, "Edit Task", "Update task:", text=current_item.text())
+    def edit_task(self, item=None):
+        if item is None:
+            item = self.task_list.currentItem()
+        if item:
+            new_text, ok = QInputDialog.getText(self, "Edit Task", "Update task:", text=item.text())
             if ok and new_text.strip():
-                current_item.setText(new_text.strip())
+                item.setText(new_text.strip())
                 self.save_tasks()
 
-    def delete_task(self):
-        row = self.task_list.currentRow()
-        if row >= 0:
+    def delete_task(self, item=None):
+        if item is None:
+            item = self.task_list.currentItem()
+        if item:
+            row = self.task_list.row(item)
             self.task_list.takeItem(row)
             self.save_tasks()
 
     def save_tasks(self):
-        tasks = [self.task_list.item(i).text() for i in range(self.task_list.count())]
+        tasks = []
+        for i in range(self.task_list.count()):
+            item = self.task_list.item(i)
+            task_data = {
+                "text": item.text(),
+                "completed": item.data(Qt.UserRole) or False
+            }
+            tasks.append(task_data)
         with open("tasks.json", "w") as f:
             json.dump(tasks, f)
 
@@ -210,11 +218,14 @@ class TaskTracker(QWidget):
             with open("tasks.json", "r") as f:
                 tasks = json.load(f)
                 for task in tasks:
-                    if isinstance(task, str):
+                    if isinstance(task, dict):
+                        item = QListWidgetItem(task.get("text", ""))
+                        self.task_list.addItem(item)
+                        if task.get("completed", False):
+                            item.setData(Qt.UserRole, True)
+                            item.setData(Qt.UserRole + 1, "true")
+                    elif isinstance(task, str):
                         self.task_list.addItem(task)
-                    elif isinstance(task, dict):
-                        # fallback: show description if present
-                        self.task_list.addItem(task.get("description", ""))
         except FileNotFoundError:
             pass
 
@@ -232,6 +243,37 @@ class TaskTracker(QWidget):
             self.showNormal()
         else:
             self.showMaximized()
+
+    def show_context_menu(self, position):
+        item = self.task_list.itemAt(position)
+        if item is None:
+            return
+
+        menu = QMenu()
+        edit_action = menu.addAction("Edit")
+        done_action = menu.addAction("Mark as Done" if not item.data(Qt.UserRole) else "Mark as Undone")
+        delete_action = menu.addAction("Delete")
+
+        action = menu.exec_(self.task_list.mapToGlobal(position))
+
+        if action == edit_action:
+            self.edit_task(item)
+        elif action == done_action:
+            self.toggle_task_done(item)
+        elif action == delete_action:
+            self.delete_task(item)
+
+    def toggle_task_done(self, item=None):
+        if item is None:
+            item = self.task_list.currentItem()
+        if item:
+            is_done = not item.data(Qt.UserRole)
+            item.setData(Qt.UserRole, is_done)
+            if is_done:
+                item.setData(Qt.UserRole + 1, "true")
+            else:
+                item.setData(Qt.UserRole + 1, "false")
+            self.save_tasks()
 
     # --- Mouse events for dragging and resizing ---
 
