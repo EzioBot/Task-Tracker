@@ -3,10 +3,67 @@ import json
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QCalendarWidget, QLineEdit, QListWidget, QLabel, QInputDialog,
-    QFrame
+    QFrame, QListWidgetItem
 )
-from PyQt5.QtCore import QTimer, QTime, Qt, QDate, QPoint, QRect
-from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtCore import QTimer, QTime, Qt, QDate
+from PyQt5.QtGui import QFont, QIcon, QFontMetrics, QBrush, QColor
+
+
+class TaskWidget(QWidget):
+    def __init__(self, text, done, parent, item):
+        super().__init__()
+        self.parent = parent
+        self.item = item
+        self.text = text
+        self.done = done
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.label = QLabel(text)
+        self.label.setFont(QFont("Courier", 12))
+        self.update_style()
+        layout.addWidget(self.label)
+
+        btn_done = QPushButton("✔")
+        btn_done.setFixedSize(30, 25)
+        btn_done.clicked.connect(self.toggle_done)
+        layout.addWidget(btn_done)
+
+        btn_edit = QPushButton("✎")
+        btn_edit.setFixedSize(30, 25)
+        btn_edit.clicked.connect(self.edit_task)
+        layout.addWidget(btn_edit)
+
+        btn_delete = QPushButton("🗑")
+        btn_delete.setFixedSize(30, 25)
+        btn_delete.clicked.connect(self.delete_task)
+        layout.addWidget(btn_delete)
+
+        self.setLayout(layout)
+
+    def update_style(self):
+        font = self.label.font()
+        font.setStrikeOut(self.done)
+        self.label.setFont(font)
+        color = "#888888" if self.done else "#333333"
+        self.label.setStyleSheet(f"color: {color};")
+
+    def toggle_done(self):
+        self.done = not self.done
+        self.update_style()
+        self.parent.save_tasks()
+
+    def edit_task(self):
+        new_text, ok = QInputDialog.getText(self, "Edit Task", "Update task:", text=self.text)
+        if ok and new_text.strip():
+            self.text = new_text.strip()
+            self.label.setText(self.text)
+            self.parent.save_tasks()
+
+    def delete_task(self):
+        self.parent.task_list.takeItem(self.parent.task_list.row(self.item))
+        self.parent.save_tasks()
 
 
 class TaskTracker(QWidget):
@@ -17,12 +74,9 @@ class TaskTracker(QWidget):
         self.setGeometry(100, 100, 600, 700)
         self.setMinimumSize(400, 500)
 
-        # Frameless window
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowSystemMenuHint | Qt.WindowMinimizeButtonHint)
-        # self.setAttribute(Qt.WA_TranslucentBackground)
 
-        # Variables for drag/resize
-        self._margin = 8  # resize area margin
+        self._margin = 8
         self._drag_pos = None
         self._resizing = False
         self._resize_direction = None
@@ -36,7 +90,7 @@ class TaskTracker(QWidget):
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # --- Custom title bar ---
+        # --- Title bar ---
         title_bar = QFrame()
         title_bar.setFixedHeight(40)
         title_bar.setStyleSheet("background-color: #e3d7a3;")
@@ -54,31 +108,28 @@ class TaskTracker(QWidget):
         title_layout.addWidget(title)
         title_layout.addStretch()
 
-        # Minimize button
         btn_min = QPushButton("–")
         btn_min.setFixedSize(25, 25)
         btn_min.setStyleSheet(
-            "QPushButton {border:none; border-radius:12px; background-color:#f1c40f; color:white; font-weight:bold;}"
+            "QPushButton {background-color:#f1c40f; color:white; border-radius:12px;}"
             "QPushButton:hover {background-color:black;}"
         )
         btn_min.clicked.connect(self.showMinimized)
         title_layout.addWidget(btn_min)
 
-        # Maximize/Restore button
         btn_max = QPushButton("□")
         btn_max.setFixedSize(25, 25)
         btn_max.setStyleSheet(
-            "QPushButton {border:none; border-radius:12px; background-color:#2ecc71; color:white; font-weight:bold;}"
+            "QPushButton {background-color:#2ecc71; color:white; border-radius:12px;}"
             "QPushButton:hover {background-color:black;}"
         )
         btn_max.clicked.connect(self.toggle_max_restore)
         title_layout.addWidget(btn_max)
 
-        # Close button
         btn_close = QPushButton("×")
         btn_close.setFixedSize(25, 25)
         btn_close.setStyleSheet(
-            "QPushButton {border:none; border-radius:12px; background-color:#e74c3c; color:white; font-weight:bold;}"
+            "QPushButton {background-color:#e74c3c; color:white; border-radius:12px;}"
             "QPushButton:hover {background-color:black;}"
         )
         btn_close.clicked.connect(self.close)
@@ -88,7 +139,6 @@ class TaskTracker(QWidget):
         self._title_bar = title_bar
 
         # --- Clock ---
-        font = QFont("Courier", 12)
         self.clock_label = QLabel()
         self.clock_label.setFont(QFont("Courier", 16, QFont.Bold))
         self.clock_label.setAlignment(Qt.AlignRight)
@@ -99,18 +149,13 @@ class TaskTracker(QWidget):
         timer.start(1000)
         self.update_clock()
 
-        # --- Calendar frame ---
+        # --- Calendar ---
         calendar_frame = QFrame()
-        calendar_frame.setFrameStyle(QFrame.StyledPanel | QFrame.Raised)
         calendar_frame.setStyleSheet("""
             QFrame {
                 background-color: #fffbe6;
                 border: 2px solid #d4c9a8;
                 border-radius: 5px;
-            }
-            QFrame:hover {
-                background-color: #f0e6cc;
-                cursor: pointer;
             }
         """)
         calendar_layout = QVBoxLayout(calendar_frame)
@@ -127,10 +172,10 @@ class TaskTracker(QWidget):
         calendar_frame.mousePressEvent = self.toggle_calendar
         main_layout.addWidget(calendar_frame)
 
-        # --- Task input ---
+        # --- Input ---
         input_layout = QHBoxLayout()
         self.task_input = QLineEdit()
-        self.task_input.setFont(font)
+        self.task_input.setFont(QFont("Courier", 12))
         self.task_input.setPlaceholderText("Enter a task...")
         input_layout.addWidget(self.task_input)
 
@@ -141,37 +186,8 @@ class TaskTracker(QWidget):
 
         # --- Task list ---
         self.task_list = QListWidget()
-        self.task_list.setFont(font)
-        self.task_list.setStyleSheet("""
-            QListWidget {
-                background-color: #fffbe6;
-                border: none;
-            }
-            QListWidget::item {
-                background: #f9eec0;
-                border: 1.5px solid #d4c9a8;
-                border-radius: 10px;
-                margin: 8px 4px;
-                padding: 10px 12px;
-                color: #333;
-            }
-            QListWidget::item:selected {
-                background: #ffe066;
-                border: 2px solid #f1c40f;
-                color: #222;
-            }
-        """)
+        self.task_list.setStyleSheet("QListWidget { background-color: #fffbe6; border: none; }")
         main_layout.addWidget(self.task_list)
-
-        # --- Edit/Delete buttons ---
-        btn_layout = QHBoxLayout()
-        edit_btn = QPushButton("Edit")
-        delete_btn = QPushButton("Delete")
-        edit_btn.clicked.connect(self.edit_task)
-        delete_btn.clicked.connect(self.delete_task)
-        btn_layout.addWidget(edit_btn)
-        btn_layout.addWidget(delete_btn)
-        main_layout.addLayout(btn_layout)
 
         self.setLayout(main_layout)
 
@@ -181,46 +197,63 @@ class TaskTracker(QWidget):
     def add_task(self):
         task_text = self.task_input.text().strip()
         if task_text:
-            self.task_list.addItem(task_text)
+            self.create_task_item(task_text, False)
             self.task_input.clear()
             self.save_tasks()
 
-    def edit_task(self):
-        current_item = self.task_list.currentItem()
-        if current_item:
-            new_text, ok = QInputDialog.getText(self, "Edit Task", "Update task:", text=current_item.text())
-            if ok and new_text.strip():
-                current_item.setText(new_text.strip())
-                self.save_tasks()
+    def create_task_item(self, text, done):
+        item = QListWidgetItem()
+        widget = TaskWidget(text, done, self, item)
+        item.setSizeHint(widget.sizeHint())
+        self.task_list.addItem(item)
+        self.task_list.setItemWidget(item, widget)
 
-    def delete_task(self):
-        row = self.task_list.currentRow()
-        if row >= 0:
-            self.task_list.takeItem(row)
-            self.save_tasks()
+    # def save_tasks(self):
+    #     tasks = []
+    #     for i in range(self.task_list.count()):
+    #         item = self.task_list.item(i)
+    #         widget = self.task_list.itemWidget(item)
+    #         tasks.append({"text": widget.text, "done": widget.done})
+    #     with open("tasks.json", "w") as f:
+    #         json.dump(tasks, f)
 
     def save_tasks(self):
-        tasks = [self.task_list.item(i).text() for i in range(self.task_list.count())]
-        with open("tasks.json", "w") as f:
-            json.dump(tasks, f)
+        data = []
+        for task_item in self.tasks:
+            data.append({
+                "text": task_item.text(),
+                "done": task_item.is_done()
+            })
+        with open("tasks.json", "w") as file:
+            json.dump(data, file)
 
+
+    # def load_tasks(self):
+    #     self.task_list.clear()
+    #     try:
+    #         with open("tasks.json", "r") as f:
+    #             tasks = json.load(f)
+    #             for task in tasks:
+    #                 self.create_task_item(task.get("text", ""), task.get("done", False))
+    #     except FileNotFoundError:
+    #         pass
+
+        
     def load_tasks(self):
-        self.task_list.clear()
         try:
-            with open("tasks.json", "r") as f:
-                tasks = json.load(f)
-                for task in tasks:
-                    if isinstance(task, str):
-                        self.task_list.addItem(task)
-                    elif isinstance(task, dict):
-                        # fallback: show description if present
-                        self.task_list.addItem(task.get("description", ""))
+            with open("tasks.json", "r") as file:
+                task_data = json.load(file)
+                for task in task_data:
+                    if isinstance(task, dict):
+                        self.create_task_item(task.get("text", ""), task.get("done", False))
+                    elif isinstance(task, str):  # fallback if older format
+                        self.create_task_item(task, False)
         except FileNotFoundError:
-            pass
+            pass  
+
 
     def update_date_display(self):
-        current_date = QDate.currentDate()
-        self.date_label.setText(current_date.toString("MMMM d, yyyy"))
+        self.date_label.setText(QDate.currentDate().toString("MMMM d, yyyy"))
 
     def toggle_calendar(self, event):
         self.calendar.setVisible(not self.calendar.isVisible())
@@ -233,15 +266,13 @@ class TaskTracker(QWidget):
         else:
             self.showMaximized()
 
-    # --- Mouse events for dragging and resizing ---
-
+    # --- Mouse events ---
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             pos = event.pos()
             geo = self.rect()
             margin = self._margin
 
-            # Check edges for resize direction
             left = pos.x() <= margin
             right = pos.x() >= geo.width() - margin
             top = pos.y() <= margin
@@ -268,7 +299,6 @@ class TaskTracker(QWidget):
             if self._resize_direction:
                 self._resizing = True
             else:
-                # Dragging only if click is on title bar
                 if self._title_bar.geometry().contains(pos):
                     self._dragging = True
                     self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
@@ -285,59 +315,20 @@ class TaskTracker(QWidget):
             rect = self.geometry()
 
             if "left" in self._resize_direction:
-                new_left = rect.left() + diff.x()
-                if new_left < rect.right() - self.minimumWidth():
-                    rect.setLeft(new_left)
+                rect.setLeft(rect.left() + diff.x())
             if "right" in self._resize_direction:
-                new_right = rect.right() + diff.x()
-                if new_right > rect.left() + self.minimumWidth():
-                    rect.setRight(new_right)
+                rect.setRight(rect.right() + diff.x())
             if "top" in self._resize_direction:
-                new_top = rect.top() + diff.y()
-                if new_top < rect.bottom() - self.minimumHeight():
-                    rect.setTop(new_top)
+                rect.setTop(rect.top() + diff.y())
             if "bottom" in self._resize_direction:
-                new_bottom = rect.bottom() + diff.y()
-                if new_bottom > rect.top() + self.minimumHeight():
-                    rect.setBottom(new_bottom)
+                rect.setBottom(rect.bottom() + diff.y())
 
             self.setGeometry(rect)
             self._old_pos = global_pos
             return
 
         if self._dragging:
-            self.move(event.globalPos() - self._drag_pos)
-            return
-
-        # Change cursor shape for resize edges
-        margin = self._margin
-        left = pos.x() <= margin
-        right = pos.x() >= geo.width() - margin
-        top = pos.y() <= margin
-        bottom = pos.y() >= geo.height() - margin
-
-        # If mouse is on the title bar (drag area), show drag cursor
-        if self._title_bar.geometry().contains(pos):
-            self.setCursor(Qt.SizeAllCursor)
-        else:
-            if top and left:
-                self.setCursor(Qt.SizeFDiagCursor)
-            elif top and right:
-                self.setCursor(Qt.SizeBDiagCursor)
-            elif bottom and left:
-                self.setCursor(Qt.SizeBDiagCursor)
-            elif bottom and right:
-                self.setCursor(Qt.SizeFDiagCursor)
-            elif left:
-                self.setCursor(Qt.SizeHorCursor)
-            elif right:
-                self.setCursor(Qt.SizeHorCursor)
-            elif top:
-                self.setCursor(Qt.SizeVerCursor)
-            elif bottom:
-                self.setCursor(Qt.SizeVerCursor)
-            else:
-                self.setCursor(Qt.ArrowCursor)
+            self.move(global_pos - self._drag_pos)
 
     def mouseReleaseEvent(self, event):
         self._resizing = False
