@@ -3,10 +3,196 @@ import json
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QCalendarWidget, QLineEdit, QListWidget, QLabel, QInputDialog,
-    QFrame, QTimeEdit, QDialog, QDialogButtonBox
+    QFrame, QTimeEdit, QDialog, QDialogButtonBox, QListWidgetItem,
+    QListView, QSizePolicy, QRadioButton, QButtonGroup, QSpinBox, QFormLayout,
+    QGroupBox
 )
-from PyQt5.QtCore import QTimer, QTime, Qt, QDate, QPoint, QRect
+from PyQt5.QtCore import QTimer, QTime, Qt, QDate, QPoint, QRect, QDateTime
 from PyQt5.QtGui import QFont, QIcon
+
+
+class TaskItemWidget(QFrame):
+    def __init__(self, parent_tracker, description: str, created: str, due: str, priority: str):
+        super().__init__()
+        self._tracker = parent_tracker
+        self.description = description
+        self.created = created
+        self.due = due
+        self.priority = priority or "low"
+
+        bg = self._background_for_priority(self.priority)
+        self.setStyleSheet(
+            f"""
+            QFrame {{
+                background: {bg};
+                border-radius: 10px;
+            }}
+            QLabel {{ color: #333; }}
+            QPushButton {{
+                margin-left: 8px;
+                background-color: #2d3436;
+                color: #ffffff;
+                border: none;
+                border-radius: 8px;
+                padding: 6px 12px;
+            }}
+            QPushButton:hover {{
+                background-color: #000000;
+            }}
+            """
+        )
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+
+        self.desc_label = QLabel(self.description)
+        # Make task title more readable and bold
+        title_font = QFont("Courier", 13)
+        title_font.setBold(True)
+        self.desc_label.setFont(title_font)
+
+        priority_label = self.priority.capitalize()
+        # Removed created date/time from display; show priority and due only
+        self.meta_label = QLabel((f"[{priority_label}]   " if priority_label else "") + (f"[Due: {self.due}]" if self.due else ""))
+        meta_font = QFont("Courier", 10)
+        self.meta_label.setFont(meta_font)
+
+        layout.addWidget(self.desc_label)
+        layout.addStretch()
+        layout.addWidget(self.meta_label)
+
+        self.edit_btn = QPushButton("Edit")
+        btn_font = QFont("Courier", 11)
+        btn_font.setBold(True)
+        self.edit_btn.setFont(btn_font)
+        self.edit_btn.clicked.connect(self.edit_task)
+        layout.addWidget(self.edit_btn)
+
+        self.setMinimumHeight(48)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    def _background_for_priority(self, priority: str) -> str:
+        p = (priority or "").lower()
+        if p == "urgent":
+            return "#f8a3a0"  # vibrant soft red
+        if p == "high":
+            return "#ffe066"  # vibrant soft yellow
+        # low
+        return "#aecdff"      # vibrant soft blue
+
+    def edit_task(self):
+        new_text, ok = QInputDialog.getText(self, "Edit Task", "Update task:", text=self.description)
+        if ok and new_text.strip():
+            self.description = new_text.strip()
+            self.desc_label.setText(self.description)
+            # Persist changes
+            self._tracker.save_tasks()
+            # Ensure the list recalculates the item's size
+            self._tracker.rehint_for_widget(self)
+
+
+class DueDateDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Due Date")
+        layout = QVBoxLayout(self)
+        self.calendar = QCalendarWidget()
+        self.calendar.setSelectedDate(QDate.currentDate())
+        layout.addWidget(self.calendar)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def selectedDate(self) -> QDate:
+        return self.calendar.selectedDate()
+
+
+class DueTimeDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Due Time or Timer")
+        main_layout = QVBoxLayout(self)
+
+        # Choice: exact time or timer
+        self.radio_exact = QRadioButton("Pick exact time")
+        self.radio_timer = QRadioButton("Use timer (duration)")
+        self.radio_exact.setChecked(True)
+        main_layout.addWidget(self.radio_exact)
+        main_layout.addWidget(self.radio_timer)
+
+        # Exact time controls
+        exact_layout = QHBoxLayout()
+        self.time_edit = QTimeEdit()
+        self.time_edit.setDisplayFormat("HH:mm")
+        self.time_edit.setTime(QTime.currentTime())
+        exact_layout.addWidget(QLabel("Time:"))
+        exact_layout.addWidget(self.time_edit)
+        main_layout.addLayout(exact_layout)
+
+        # Timer controls
+        form = QFormLayout()
+        self.spin_hours = QSpinBox()
+        self.spin_hours.setRange(0, 168)
+        self.spin_hours.setValue(0)
+        self.spin_minutes = QSpinBox()
+        self.spin_minutes.setRange(0, 59)
+        self.spin_minutes.setValue(30)
+        form.addRow("Hours:", self.spin_hours)
+        form.addRow("Minutes:", self.spin_minutes)
+        main_layout.addLayout(form)
+
+        # Enable/disable sections based on radio
+        def update_enabled():
+            exact_enabled = self.radio_exact.isChecked()
+            self.time_edit.setEnabled(exact_enabled)
+            self.spin_hours.setEnabled(not exact_enabled)
+            self.spin_minutes.setEnabled(not exact_enabled)
+        self.radio_exact.toggled.connect(update_enabled)
+        update_enabled()
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        main_layout.addWidget(buttons)
+
+    def resultDateTime(self, base_date: QDate) -> QDateTime:
+        if self.radio_exact.isChecked():
+            return QDateTime(base_date, self.time_edit.time())
+        # Timer mode: compute now + duration
+        now_dt = QDateTime.currentDateTime()
+        minutes_total = self.spin_hours.value() * 60 + self.spin_minutes.value()
+        return now_dt.addSecs(minutes_total * 60)
+
+
+class PriorityDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Priority")
+        layout = QVBoxLayout(self)
+
+        group_box = QGroupBox("Priority")
+        g_layout = QVBoxLayout(group_box)
+        self.radio_urgent = QRadioButton("Urgent")
+        self.radio_high = QRadioButton("High")
+        self.radio_low = QRadioButton("Low")
+        self.radio_low.setChecked(True)
+        g_layout.addWidget(self.radio_urgent)
+        g_layout.addWidget(self.radio_high)
+        g_layout.addWidget(self.radio_low)
+        layout.addWidget(group_box)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def selectedPriority(self) -> str:
+        if self.radio_urgent.isChecked():
+            return "urgent"
+        if self.radio_high.isChecked():
+            return "high"
+        return "low"
 
 
 class TaskTracker(QWidget):
@@ -118,9 +304,7 @@ class TaskTracker(QWidget):
         add_button.clicked.connect(self.add_task)
         input_layout.addWidget(add_button)
 
-        edit_button = QPushButton("Edit")
-        edit_button.clicked.connect(self.edit_task)
-        input_layout.addWidget(edit_button)
+        # Removed global Edit button; per-task Edit buttons are provided in the list
 
         delete_button = QPushButton("Delete")
         delete_button.clicked.connect(self.delete_task)
@@ -130,27 +314,23 @@ class TaskTracker(QWidget):
 
         # --- Task list ---
         self.task_list = QListWidget()
+        self.task_list.setSpacing(8)
         font = QFont("Courier", 12)
         self.task_list.setFont(font)
-        self.task_list.setStyleSheet("""
-            QListWidget {
-                background-color: #fffbe6;
-                border: none;
-            }
-            QListWidget::item {
-                background: #f9eec0;
-                border: 1.5px solid #d4c9a8;
-                border-radius: 10px;
-                margin: 8px 4px;
-                padding: 10px 12px;
-                color: #333;
-            }
-            QListWidget::item:selected {
-                background: #ffe066;
-                border: 2px solid #f1c40f;
-                color: #222;
-            }
-        """)
+        # Keep background only; card styles come from TaskItemWidget
+        self.task_list.setStyleSheet(
+            """
+            QListWidget { background-color: #fffbe6; border: none; }
+            """
+        )
+        # Enforce vertical, non-wrapping list behavior
+        self.task_list.setViewMode(QListView.ListMode)
+        self.task_list.setMovement(QListView.Static)
+        self.task_list.setWrapping(False)
+        self.task_list.setFlow(QListView.TopToBottom)
+        self.task_list.setResizeMode(QListView.Adjust)
+        self.task_list.setUniformItemSizes(False)
+        self.task_list.setSortingEnabled(False)
         main_layout.addWidget(self.task_list)
 
         self.setLayout(main_layout)
@@ -164,50 +344,41 @@ class TaskTracker(QWidget):
         if not task_text:
             return
 
-        # --- Ask for due date ---
-        due_date, ok = QInputDialog.getText(self, "Due Date", "Enter due date (YYYY-MM-DD) or leave blank for today:", text=QDate.currentDate().toString("yyyy-MM-dd"))
-        if not ok:
+        # --- Ask for due date with calendar ---
+        date_dialog = DueDateDialog(self)
+        if date_dialog.exec_() != QDialog.Accepted:
             return
-        if due_date.strip():
-            try:
-                due_qdate = QDate.fromString(due_date.strip(), "yyyy-MM-dd")
-                if not due_qdate.isValid():
-                    raise ValueError
-            except Exception:
-                due_qdate = QDate.currentDate()
-        else:
-            due_qdate = QDate.currentDate()
+        selected_date = date_dialog.selectedDate()
 
-        # --- Ask for due time ---
-        due_time, ok = QInputDialog.getText(self, "Due Time", "Enter due time (HH:mm) or leave blank for 23:59:", text="23:59")
-        if not ok:
+        # --- Ask for due time or timer ---
+        time_dialog = DueTimeDialog(self)
+        if time_dialog.exec_() != QDialog.Accepted:
             return
-        if due_time.strip():
-            try:
-                due_qtime = QTime.fromString(due_time.strip(), "HH:mm")
-                if not due_qtime.isValid():
-                    raise ValueError
-            except Exception:
-                due_qtime = QTime(23, 59)
-        else:
-            due_qtime = QTime(23, 59)
+        result_dt = time_dialog.resultDateTime(selected_date)
+        due_qdate = result_dt.date()
+        due_qtime = result_dt.time()
 
-        now = QDate.currentDate().toString("yyyy-MM-dd")
-        time = QTime.currentTime().toString("hh:mm:ss AP")
+        # --- Ask for priority ---
+        prio_dialog = PriorityDialog(self)
+        if prio_dialog.exec_() != QDialog.Accepted:
+            return
+        priority = prio_dialog.selectedPriority()
+
         due_date_str = due_qdate.toString("yyyy-MM-dd")
         due_time_str = due_qtime.toString("HH:mm")
-        display_text = f"{task_text}   [Created: {now} {time}]   [Due: {due_date_str} {due_time_str}]"
-        self.task_list.addItem(display_text)
+        due = f"{due_date_str} {due_time_str}"
+
+        item = QListWidgetItem()
+        widget = TaskItemWidget(self, task_text, "", due, priority)
+        item.setSizeHint(widget.sizeHint())
+        self.task_list.addItem(item)
+        self.task_list.setItemWidget(item, widget)
         self.task_input.clear()
         self.save_tasks()
 
     def edit_task(self):
-        current_item = self.task_list.currentItem()
-        if current_item:
-            new_text, ok = QInputDialog.getText(self, "Edit Task", "Update task:", text=current_item.text())
-            if ok and new_text.strip():
-                current_item.setText(new_text.strip())
-                self.save_tasks()
+        # Deprecated: global edit removed in favor of per-task Edit buttons
+        pass
 
     def delete_task(self):
         row = self.task_list.currentRow()
@@ -218,26 +389,37 @@ class TaskTracker(QWidget):
     def save_tasks(self):
         tasks = []
         for i in range(self.task_list.count()):
-            item_text = self.task_list.item(i).text()
-            # Try to split into text, created, and due
-            try:
-                desc, created_part, due_part = item_text.split("   [Created: ", 1)[0], "", ""
-                if "[Created:" in item_text and "[Due:" in item_text:
-                    parts = item_text.split("   [Created: ")
-                    desc = parts[0].strip()
-                    rest = parts[1]
-                    created, due = rest.split("]   [Due: ")
-                    created = created.strip()
-                    due = due.rstrip("]").strip()
+            item = self.task_list.item(i)
+            widget = self.task_list.itemWidget(item)
+            if isinstance(widget, TaskItemWidget):
+                tasks.append({
+                    "description": widget.description,
+                    "due": widget.due,
+                    "priority": widget.priority
+                })
+            else:
+                # Fallback for plain text items (legacy)
+                item_text = item.text()
+                try:
+                    desc = item_text
+                    created = ""
+                    due = ""
+                    priority = "low"
+                    if "[Created:" in item_text and "[Due:" in item_text:
+                        parts = item_text.split("   [Created: ")
+                        desc = parts[0].strip()
+                        rest = parts[1]
+                        created, due = rest.split("]   [Due: ")
+                        created = created.strip()
+                        due = due.rstrip("]").strip()
                     tasks.append({
                         "description": desc,
                         "created": created,
-                        "due": due
+                        "due": due,
+                        "priority": priority
                     })
-                else:
-                    tasks.append({"description": item_text})
-            except Exception:
-                tasks.append({"description": item_text})
+                except Exception:
+                    tasks.append({"description": item_text, "priority": "low"})
         with open("tasks.json", "w") as f:
             json.dump(tasks, f)
 
@@ -248,17 +430,30 @@ class TaskTracker(QWidget):
                 for task in tasks:
                     if isinstance(task, dict):
                         desc = task.get("description", "")
-                        created = task.get("created", "")
                         due = task.get("due", "")
-                        if created and due:
-                            display_text = f"{desc}   [Created: {created}]   [Due: {due}]"
-                        else:
-                            display_text = desc
-                        self.task_list.addItem(display_text)
+                        priority = task.get("priority", "low")
                     elif isinstance(task, str):
-                        self.task_list.addItem(task)
+                        desc = task
+                        created = ""
+                        due = ""
+                        priority = "low"
+                    else:
+                        continue
+
+                    item = QListWidgetItem()
+                    widget = TaskItemWidget(self, desc, "", due, priority)
+                    item.setSizeHint(widget.sizeHint())
+                    self.task_list.addItem(item)
+                    self.task_list.setItemWidget(item, widget)
         except FileNotFoundError:
             pass
+
+    def rehint_for_widget(self, widget: QWidget):
+        for i in range(self.task_list.count()):
+            item = self.task_list.item(i)
+            if self.task_list.itemWidget(item) is widget:
+                item.setSizeHint(widget.sizeHint())
+                break
 
 
     def update_date_display(self):
