@@ -3,67 +3,10 @@ import json
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QCalendarWidget, QLineEdit, QListWidget, QLabel, QInputDialog,
-    QFrame, QListWidgetItem
+    QFrame
 )
-from PyQt5.QtCore import QTimer, QTime, Qt, QDate
-from PyQt5.QtGui import QFont, QIcon, QFontMetrics, QBrush, QColor
-
-
-class TaskWidget(QWidget):
-    def __init__(self, text, done, parent, item):
-        super().__init__()
-        self.parent = parent
-        self.item = item
-        self.text = text
-        self.done = done
-
-        layout = QHBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        self.label = QLabel(text)
-        self.label.setFont(QFont("Courier", 12))
-        self.update_style()
-        layout.addWidget(self.label)
-
-        btn_done = QPushButton("✔")
-        btn_done.setFixedSize(30, 25)
-        btn_done.clicked.connect(self.toggle_done)
-        layout.addWidget(btn_done)
-
-        btn_edit = QPushButton("✎")
-        btn_edit.setFixedSize(30, 25)
-        btn_edit.clicked.connect(self.edit_task)
-        layout.addWidget(btn_edit)
-
-        btn_delete = QPushButton("🗑")
-        btn_delete.setFixedSize(30, 25)
-        btn_delete.clicked.connect(self.delete_task)
-        layout.addWidget(btn_delete)
-
-        self.setLayout(layout)
-
-    def update_style(self):
-        font = self.label.font()
-        font.setStrikeOut(self.done)
-        self.label.setFont(font)
-        color = "#888888" if self.done else "#333333"
-        self.label.setStyleSheet(f"color: {color};")
-
-    def toggle_done(self):
-        self.done = not self.done
-        self.update_style()
-        self.parent.save_tasks()
-
-    def edit_task(self):
-        new_text, ok = QInputDialog.getText(self, "Edit Task", "Update task:", text=self.text)
-        if ok and new_text.strip():
-            self.text = new_text.strip()
-            self.label.setText(self.text)
-            self.parent.save_tasks()
-
-    def delete_task(self):
-        self.parent.task_list.takeItem(self.parent.task_list.row(self.item))
-        self.parent.save_tasks()
+from PyQt5.QtCore import QTimer, QTime, Qt, QDate, QPoint, QRect
+from PyQt5.QtGui import QFont, QIcon
 
 
 class TaskTracker(QWidget):
@@ -186,7 +129,26 @@ class TaskTracker(QWidget):
 
         # --- Task list ---
         self.task_list = QListWidget()
-        self.task_list.setStyleSheet("QListWidget { background-color: #fffbe6; border: none; }")
+        self.task_list.setFont(font)
+        self.task_list.setStyleSheet("""
+            QListWidget {
+                background-color: #fffbe6;
+                border: none;
+            }
+            QListWidget::item {
+                background: #f9eec0;
+                border: 1.5px solid #d4c9a8;
+                border-radius: 10px;
+                margin: 8px 4px;
+                padding: 10px 12px;
+                color: #333;
+            }
+            QListWidget::item:selected {
+                background: #ffe066;
+                border: 2px solid #f1c40f;
+                color: #222;
+            }
+        """)
         main_layout.addWidget(self.task_list)
 
         self.setLayout(main_layout)
@@ -197,57 +159,39 @@ class TaskTracker(QWidget):
     def add_task(self):
         task_text = self.task_input.text().strip()
         if task_text:
-            self.create_task_item(task_text, False)
+            self.task_list.addItem(task_text)
             self.task_input.clear()
             self.save_tasks()
 
-    def create_task_item(self, text, done):
-        item = QListWidgetItem()
-        widget = TaskWidget(text, done, self, item)
-        item.setSizeHint(widget.sizeHint())
-        self.task_list.addItem(item)
-        self.task_list.setItemWidget(item, widget)
+    def edit_task(self):
+        current_item = self.task_list.currentItem()
+        if current_item:
+            new_text, ok = QInputDialog.getText(self, "Edit Task", "Update task:", text=current_item.text())
+            if ok and new_text.strip():
+                current_item.setText(new_text.strip())
+                self.save_tasks()
 
-    # def save_tasks(self):
-    #     tasks = []
-    #     for i in range(self.task_list.count()):
-    #         item = self.task_list.item(i)
-    #         widget = self.task_list.itemWidget(item)
-    #         tasks.append({"text": widget.text, "done": widget.done})
-    #     with open("tasks.json", "w") as f:
-    #         json.dump(tasks, f)
+    def delete_task(self):
+        row = self.task_list.currentRow()
+        if row >= 0:
+            self.task_list.takeItem(row)
+            self.save_tasks()
 
     def save_tasks(self):
-        data = []
-        for task_item in self.tasks:
-            data.append({
-                "text": task_item.text(),
-                "done": task_item.is_done()
-            })
-        with open("tasks.json", "w") as file:
-            json.dump(data, file)
+        tasks = [self.task_list.item(i).text() for i in range(self.task_list.count())]
+        with open("tasks.json", "w") as f:
+            json.dump(tasks, f)
 
-
-    # def load_tasks(self):
-    #     self.task_list.clear()
-    #     try:
-    #         with open("tasks.json", "r") as f:
-    #             tasks = json.load(f)
-    #             for task in tasks:
-    #                 self.create_task_item(task.get("text", ""), task.get("done", False))
-    #     except FileNotFoundError:
-    #         pass
-
-        
     def load_tasks(self):
         try:
-            with open("tasks.json", "r") as file:
-                task_data = json.load(file)
-                for task in task_data:
-                    if isinstance(task, dict):
-                        self.create_task_item(task.get("text", ""), task.get("done", False))
-                    elif isinstance(task, str):  # fallback if older format
-                        self.create_task_item(task, False)
+            with open("tasks.json", "r") as f:
+                tasks = json.load(f)
+                for task in tasks:
+                    if isinstance(task, str):
+                        self.task_list.addItem(task)
+                    elif isinstance(task, dict):
+                        # fallback: show description if present
+                        self.task_list.addItem(task.get("description", ""))
         except FileNotFoundError:
             pass  
 
@@ -266,7 +210,8 @@ class TaskTracker(QWidget):
         else:
             self.showMaximized()
 
-    # --- Mouse events ---
+    # --- Mouse events for dragging and resizing ---
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             pos = event.pos()
