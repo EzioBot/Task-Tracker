@@ -1,1 +1,11 @@
-[{"description": "homework", "due": "2025-10-04 21:23", "priority": "urgent"}, {"description": "lkjlk", "due": "2025-10-04 21:25", "priority": "high"}]
+[
+  {
+    "id": "legacy-0-1654",
+    "description": "homework",
+    "notes": "",
+    "due": "2025-10-04 21:23",
+    "priority": "urgent",
+    "completed": false,
+    "created": "2026-05-14T11:11:37"
+  }
+]
